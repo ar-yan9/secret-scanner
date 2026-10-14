@@ -1,0 +1,66 @@
+# Secret Scanner
+
+A dependency-free Python CLI that finds possible leaked credentials in local files and reachable Git history. It supports SOC 2 confidentiality controls by helping a team detect accidental credential exposure. It does **not** certify SOC 2 compliance, replace an audit, verify whether credentials work, or prove a repository is secure.
+
+## Run
+
+Requires Python 3.10+ and Git for history scanning. No paid services, network requests, or external Python packages.
+
+```bash
+git clone https://github.com/ar-yan9/secret-scanner.git
+cd secret-scanner
+python3 scanner.py /path/to/repository
+python3 scanner.py /path/to/repository --format json > report.json
+python3 scanner.py /path/to/repository --max-commits 0
+python3 scanner.py /path/to/folder --no-history --exclude 'fixtures/*'
+python3 -m unittest -v
+```
+
+On Windows, use `py -3` instead of `python3` if that is your Python launcher. Quote glob arguments so your shell does not expand them.
+
+Exit codes: **0** = no findings in the scanned scope; **1** = possible secrets found; **2** = error or incomplete scan (including a history limit or unreadable file). JSON output includes findings, scan counts, notices and scope.
+
+## What v1 checks
+
+- AWS access-key IDs, GitHub tokens, Slack tokens and Google API-key shapes.
+- PEM/OpenSSH private-key headers, including encrypted private-key headers.
+- Quoted assignments to common password, token, API-key and secret names. Obvious placeholders are filtered.
+- Mixed letter/digit strings with Shannon entropy of at least 4.3 bits per character, 24-128 characters long. These are low-confidence candidates, not confirmed credentials. Hex-only strings are skipped by the entropy rule because hashes are common.
+- Files on disk, including untracked and hidden files such as `.env`.
+- Every distinct path/blob pair in commit trees reachable from **local** refs, including deleted files and other local branches. A finding records one representative commit containing the blob, not necessarily its first introduction.
+
+Reports include rule, severity, file, line, source, commit and a truncated SHA-256 fingerprint. Matching values and source lines are never printed. The fingerprint allows repeated-value comparison; it is **not anonymization** for guessable passwords. Paths, commit IDs and fingerprints may still be sensitive. Keep reports private.
+
+## Scope and limits
+
+Default history limit: 200 commits. A notice and exit 2 mean coverage was incomplete. Use `--max-commits 0` for all reachable local history. No remote refs are fetched, and shallow clones, dangling objects, reflogs, LFS contents and submodule contents are not covered. History scanning must start at the Git repository root.
+
+Files larger than 1 MiB, non-UTF-8/binary files and symlinks are skipped. Default excluded directories: `.git`, `node_modules`, `.venv`, `venv`, `__pycache__`. Counts show skipped files, but a clean result does not cover these exclusions. Customize with repeatable root-relative `--exclude` globs and `--max-bytes`. Exclusion applies to both disk and history.
+
+False positives and false negatives are expected. Rules do not cover every provider, encoding, secret format, unquoted assignment or multi-line value. The tool never contacts a provider to validate a key. Only scan repositories you own or are authorized to inspect. It does not change files or Git history.
+
+For a planted-fixture demo, run the tests: they create a temporary Git repository, commit synthetic secrets, delete them, and leave another fake token on a side branch. No real credentials are used. Scanning this project's test code may produce deliberate test-data findings.
+
+## SOC 2 connection
+
+[AICPA describes SOC 2](https://www.aicpa-cima.com/topic/audit-assurance/audit-and-assurance-greater-than-soc-2/) as an examination of a service organization's controls relevant to security, availability, processing integrity, confidentiality or privacy. This project is a small engineering aid, not an examination.
+
+| Practice | How this tool helps | What people still need to do |
+| --- | --- | --- |
+| Identify exposure of confidential credentials | Detect likely secrets in code and historical blobs | Classify data, review alerts, determine actual exposure |
+| Limit unauthorized access | Highlight tokens and private keys for investigation | Revoke/rotate exposed credentials and review access logs |
+| Monitor a secure development process | Produce redacted machine-readable evidence for checks | Set review ownership, policies, retention and alert handling |
+
+Do not label a scan score as "SOC 2 compliant". There is no compliance score here.
+
+## If a secret is found
+
+1. Review locally without sharing the value or report publicly.
+2. Revoke/rotate any real credential promptly at its issuer. Deleting a file alone does not revoke a key.
+3. Check access and audit logs; notify the relevant owner through your incident process.
+4. Remove the value and prevent recurrence. Coordinate history rewriting separately with collaborators, if necessary.
+5. Re-scan and document the response securely.
+
+## Next work
+
+Add reviewed allowlists/baselines, richer provider rules, a pre-commit hook, SARIF output, and a configurable CI check. Keep benchmarks and claims based on real tests.
