@@ -67,6 +67,8 @@ Files larger than 1 MiB, non-UTF-8/binary files and symlinks are skipped. Defaul
 
 False positives and false negatives are expected. Rules do not cover every provider, encoding, secret format, unquoted assignment or multi-line value. The tool never contacts a provider to validate a key. Only scan repositories you own or are authorized to inspect. It does not change files or Git history.
 
+Tests include a Windows-safe unusual filename on every platform. The tab/newline filename fixture runs on POSIX and is skipped on Windows, where those names cannot be created. CI checks both Ubuntu and Windows.
+
 For a planted-fixture demo, run the tests: they create a temporary Git repository, commit synthetic secrets, delete them, and leave another fake token on a side branch. No real credentials are used. Scanning this project's test code may produce deliberate test-data findings.
 
 ## SOC 2 connection
