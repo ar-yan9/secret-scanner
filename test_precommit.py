@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -53,6 +54,12 @@ class StagedTests(unittest.TestCase):
         (self.root / '.env').write_text(FAKE_TOKEN)
         self.assertEqual(self.scan()['stats']['staged_files'], 0)
 
+    def test_windows_safe_unusual_filename(self):
+        name = 'space name - [fixture].txt'
+        self.stage(name, FAKE_TOKEN)
+        self.assertEqual(self.scan()['findings'][0]['path'], name)
+
+    @unittest.skipIf(os.name == 'nt', 'Windows filenames cannot contain tabs or newlines')
     def test_unusual_filename(self):
         name = 'space tab\tnewline\nfile.txt'
         self.stage(name, FAKE_TOKEN)
