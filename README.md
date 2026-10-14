@@ -20,6 +20,34 @@ On Windows, use `py -3` instead of `python3` if that is your Python launcher. Qu
 
 Exit codes: **0** = no findings in the scanned scope; **1** = possible secrets found; **2** = error or incomplete scan (including a history limit or unreadable file). JSON output includes findings, scan counts, notices and scope.
 
+## Staged check and optional pre-commit hook
+
+```bash
+python3 precommit.py
+python3 precommit.py --format json
+python3 precommit.py --no-entropy
+```
+
+The staged check reads Git's **index blobs**, not files on disk. Cleaning a secret
+in your editor without staging the fix does not hide a staged secret. Untracked,
+unstaged and deleted files are outside this check; use `scanner.py` for local
+files and history. Added, modified, copied and renamed paths are checked, including
+filenames containing spaces, tabs or newlines. Unmerged index entries and oversized
+staged files return exit 2. Binary files, symlinks, submodules and the scanner's
+default excluded directories are skipped. All reports remain redacted.
+
+This repository includes an optional `.pre-commit-config.yaml` for the
+[pre-commit framework](https://pre-commit.com/). With that framework already
+installed and `python3` on PATH, run `pre-commit install` from this repository.
+On Windows, change the config's entry to `py -3 precommit.py` if needed.
+The framework is optional: the standalone staged check uses only Python and Git.
+Review an existing hook before installing; do not overwrite another team's hook.
+
+To use it in another repository, copy `scanner.py` and `precommit.py` there, then
+merge the local hook entry into that repository's config. This is a local hook,
+not a remotely installable package. A hook can be bypassed and only covers its
+stated scope; it is not a security guarantee or a replacement for CI/review.
+
 ## What v1 checks
 
 - AWS access-key IDs, GitHub tokens, Slack tokens and Google API-key shapes.
@@ -63,4 +91,4 @@ Do not label a scan score as "SOC 2 compliant". There is no compliance score her
 
 ## Next work
 
-Add reviewed allowlists/baselines, richer provider rules, a pre-commit hook, SARIF output, and a configurable CI check. Keep benchmarks and claims based on real tests.
+Add reviewed allowlists/baselines, richer provider rules, SARIF output, and a configurable CI check. The staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
