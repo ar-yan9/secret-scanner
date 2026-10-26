@@ -13,12 +13,13 @@ python3 scanner.py /path/to/repository
 python3 scanner.py /path/to/repository --format json > report.json
 python3 scanner.py /path/to/repository --max-commits 0
 python3 scanner.py /path/to/folder --no-history --exclude 'fixtures/*'
+python3 scanner.py /path/to/repository --allowlist reviewed-allowlist.json
 python3 -m unittest -v
 ```
 
-On Windows, use `py -3` instead of `python3` if that is your Python launcher. Quote glob arguments so your shell does not expand them.
+On Windows, use `py -3.11` instead of `python3` if that is your Python launcher. Quote glob arguments so your shell does not expand them.
 
-Exit codes: **0** = no findings in the scanned scope; **1** = possible secrets found; **2** = error or incomplete scan (including a history limit or unreadable file). JSON output includes findings, scan counts, notices and scope.
+Exit codes: **0** = no active findings in the scanned scope; **1** = possible secrets found; **2** = error or incomplete scan (including a history limit or unreadable file). Reviewed allowlist matches are suppressed from active findings and counted separately. JSON output includes findings, scan counts, allowlist counts, notices and scope.
 
 ## Staged check and optional pre-commit hook
 
@@ -59,11 +60,33 @@ stated scope; it is not a security guarantee or a replacement for CI/review.
 
 Reports include rule, severity, file, line, source, commit and a truncated SHA-256 fingerprint. Matching values and source lines are never printed. The fingerprint allows repeated-value comparison; it is **not anonymization** for guessable passwords. Paths, commit IDs and fingerprints may still be sensitive. Keep reports private.
 
+## Reviewed allowlist
+
+Use an allowlist only for a finding a person has reviewed and confirmed is not a real exposure, such as a documented synthetic fixture. It is not a broad ignore file and does not store the secret value. Every entry must match the finding's source, root-relative path, rule, 16-character fingerprint and original line exactly:
+
+```json
+{
+  "version": 1,
+  "allow": [
+    {
+      "source": "worktree",
+      "path": "tests/fixtures/example.py",
+      "rule": "high-entropy-token",
+      "fingerprint": "0123456789abcdef",
+      "line": 3,
+      "reason": "Documented synthetic fixture"
+    }
+  ]
+}
+```
+
+Unknown fields, broad patterns, absolute paths, parent-directory paths and invalid fingerprints are rejected. The file is capped at 64 KiB and 1,000 entries. If a matched finding moves to another line or changes value, it becomes active again. Scan stats show `allowlist_entries`, `suppressed_findings` and `unused_allowlist_entries`, so stale entries remain visible. The allowlist applies to `scanner.py` worktree/history scans only; the staged `precommit.py` check intentionally has no suppression path.
+
 ## Scope and limits
 
 Default history limit: 200 commits. A notice and exit 2 mean coverage was incomplete. Use `--max-commits 0` for all reachable local history. No remote refs are fetched, and shallow clones, dangling objects, reflogs, LFS contents and submodule contents are not covered. History scanning must start at the Git repository root.
 
-Files larger than 1 MiB, non-UTF-8/binary files and symlinks are skipped. Default excluded directories: `.git`, `node_modules`, `.venv`, `venv`, `__pycache__`. Counts show skipped files, but a clean result does not cover these exclusions. Customize with repeatable root-relative `--exclude` globs and `--max-bytes`. Exclusion applies to both disk and history.
+Files larger than 1 MiB, non-UTF-8/binary files and symlinks are skipped. Default excluded directories: `.git`, `node_modules`, `.venv`, `venv`, `__pycache__`. Counts show skipped files, but a clean result does not cover these exclusions. Customize with repeatable root-relative `--exclude` globs and `--max-bytes`. Exclusion applies to both disk and history. Suppression applies only after a full scan and only to exact reviewed findings.
 
 False positives and false negatives are expected. Rules do not cover every provider, encoding, secret format, unquoted assignment or multi-line value. The tool never contacts a provider to validate a key. Only scan repositories you own or are authorized to inspect. It does not change files or Git history.
 
@@ -93,4 +116,4 @@ Do not label a scan score as "SOC 2 compliant". There is no compliance score her
 
 ## Next work
 
-Add reviewed allowlists/baselines, richer provider rules, SARIF output, and a configurable CI check. The staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
+Add baseline generation, richer provider rules, SARIF output, and a configurable CI check. The staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
