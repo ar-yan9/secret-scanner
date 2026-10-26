@@ -117,5 +117,66 @@ class RepositoryTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(scanner.main([str(self.root), '--max-commits', '1']), 2)
 
+class AllowlistTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root/'.env').write_text('password = "'+FAKE_PASSWORD+'"')
+        self.finding = scanner.scan_repo(self.root, history=False)['findings'][0]
+        self.allowlist = self.root/'allowlist.json'
+    def write_allowlist(self, **changes):
+        row = {key: self.finding[key] for key in ('source', 'path', 'rule', 'fingerprint', 'line')}
+        row.update(changes)
+        self.allowlist.write_text(json.dumps({'version': 1, 'allow': [row]}))
+        return row
+    def test_exact_reviewed_match_is_suppressed(self):
+        self.write_allowlist(reason='Reviewed synthetic fixture')
+        allowlist = scanner.load_allowlist(self.allowlist)
+        report = scanner.scan_repo(self.root, history=False, allowlist=allowlist)
+        self.assertEqual(report['findings'], [])
+        self.assertEqual(report['stats']['allowlist_entries'], 1)
+        self.assertEqual(report['stats']['suppressed_findings'], 1)
+        self.assertEqual(report['stats']['unused_allowlist_entries'], 0)
+    def test_line_mismatch_does_not_suppress(self):
+        self.write_allowlist(line=self.finding['line'] + 1)
+        allowlist = scanner.load_allowlist(self.allowlist)
+        report = scanner.scan_repo(self.root, history=False, allowlist=allowlist)
+        self.assertEqual(len(report['findings']), 1)
+        self.assertEqual(report['stats']['suppressed_findings'], 0)
+        self.assertEqual(report['stats']['unused_allowlist_entries'], 1)
+    def test_invalid_allowlist_entries_are_rejected(self):
+        valid = {key: self.finding[key] for key in ('source', 'path', 'rule', 'fingerprint', 'line')}
+        invalid_rows = [
+            dict(valid, source='index'),
+            dict(valid, path='../outside.env'),
+            dict(valid, fingerprint='A' * 16),
+            dict(valid, line=0),
+            dict(valid, unknown='broad'),
+        ]
+        for row in invalid_rows:
+            with self.subTest(row=row):
+                self.allowlist.write_text(json.dumps({'version': 1, 'allow': [row]}))
+                with self.assertRaises(ValueError):
+                    scanner.load_allowlist(self.allowlist)
+    def test_invalid_document_and_limits(self):
+        for text in ('not json', '{"version":2,"allow":[]}', '{"version":1,"allow":{}}'):
+            self.allowlist.write_text(text)
+            with self.assertRaises(ValueError):
+                scanner.load_allowlist(self.allowlist)
+    def test_cli_allowlist_exit_and_redaction(self):
+        self.write_allowlist(reason='Reviewed synthetic fixture')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = scanner.main([str(self.root), '--no-history', '--allowlist', str(self.allowlist)])
+        self.assertEqual(code, 0)
+        self.assertIn('Suppressed by reviewed allowlist: 1', output.getvalue())
+        self.assertNotIn(FAKE_PASSWORD, output.getvalue())
+    def test_cli_bad_allowlist_fails_closed(self):
+        self.allowlist.write_text('{"version":1,"allow":[{"path":".env"}]}')
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(scanner.main([str(self.root), '--no-history', '--allowlist', str(self.allowlist)]), 2)
+
+
 if __name__ == '__main__':
     unittest.main()
