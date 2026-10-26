@@ -24,6 +24,10 @@ ASSIGNMENT = re.compile(
 ENTROPY_TOKEN = re.compile(r'(?<![\w/])[A-Za-z0-9+/=_-]{24,128}(?![\w/])')
 PLACEHOLDER = re.compile(r'(?i)^(?:changeme|password|example|placeholder|your[_-].*|<.*>|\$\{.*\}|\{\{.*\}\})$')
 DEFAULT_EXCLUDES = ('node_modules/*', '.venv/*', 'venv/*', '__pycache__/*', '.git/*')
+ALLOWLIST_SOURCES = {'worktree', 'history'}
+ALLOWLIST_MAX_BYTES = 64 * 1024
+ALLOWLIST_MAX_ENTRIES = 1000
+ALLOWLIST_FINGERPRINT = re.compile(r'^[0-9a-f]{16}$')
 
 @dataclass(frozen=True)
 class Finding:
@@ -76,6 +80,70 @@ def excluded(path, patterns):
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
+def load_allowlist(path):
+    """Load exact reviewed finding suppressions without accepting raw secrets.
+
+    An entry matches only source, path, rule, fingerprint and original line.
+    Unknown fields are rejected so a broad or accidental rule cannot hide more
+    than the reviewer intended.
+    """
+    file = Path(path)
+    with file.open('rb') as handle:
+        data = handle.read(ALLOWLIST_MAX_BYTES + 1)
+    if len(data) > ALLOWLIST_MAX_BYTES:
+        raise ValueError('allowlist exceeds byte limit')
+    try:
+        document = json.loads(data.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError('allowlist must be valid UTF-8 JSON') from error
+    if (not isinstance(document, dict) or document.get('version') != 1
+            or not isinstance(document.get('allow'), list)):
+        raise ValueError('allowlist format is invalid')
+    rows = document['allow']
+    if len(rows) > ALLOWLIST_MAX_ENTRIES:
+        raise ValueError('allowlist exceeds entry limit')
+    required = {'source', 'path', 'rule', 'fingerprint', 'line'}
+    allowed = required | {'reason'}
+    entries = set()
+    for row in rows:
+        if (not isinstance(row, dict) or not required.issubset(row)
+                or not set(row).issubset(allowed)):
+            raise ValueError('allowlist entry format is invalid')
+        source, path, rule = row['source'], row['path'], row['rule']
+        fingerprint, line = row['fingerprint'], row['line']
+        reason = row.get('reason', '')
+        if (source not in ALLOWLIST_SOURCES or not isinstance(path, str)
+                or not 1 <= len(path) <= 512 or path.startswith('/')
+                or '\\' in path or '..' in Path(path).parts
+                or not isinstance(rule, str) or not 1 <= len(rule) <= 80
+                or any(ord(char) < 32 for char in rule)
+                or not isinstance(fingerprint, str)
+                or not ALLOWLIST_FINGERPRINT.fullmatch(fingerprint)
+                or isinstance(line, bool) or not isinstance(line, int)
+                or not 1 <= line <= 1000000
+                or not isinstance(reason, str) or len(reason) > 200
+                or '\n' in reason or '\r' in reason):
+            raise ValueError('allowlist entry format is invalid')
+        entries.add((source, path, rule, fingerprint, line))
+    return entries
+
+
+def apply_allowlist(findings, allowlist):
+    """Remove only exact reviewed matches and return suppression stats."""
+    rows = [asdict(f) for f in findings]
+    if not allowlist:
+        return rows, {'allowlist_entries': 0, 'suppressed_findings': 0,
+                      'unused_allowlist_entries': 0}
+    keys = {(row['source'], row['path'], row['rule'], row['fingerprint'], row['line'])
+            for row in rows}
+    kept = [row for row in rows
+            if (row['source'], row['path'], row['rule'], row['fingerprint'], row['line'])
+            not in allowlist]
+    return kept, {'allowlist_entries': len(allowlist),
+                  'suppressed_findings': len(rows) - len(kept),
+                  'unused_allowlist_entries': len(allowlist - keys)}
+
+
 def decode(data):
     if b'\0' in data:
         return None
@@ -98,7 +166,7 @@ def git(root, *args):
 
 
 def scan_repo(root, history=True, use_entropy=True, max_bytes=1024*1024,
-              max_commits=200, excludes=()):
+              max_commits=200, excludes=(), allowlist=None):
     root = Path(root).resolve()
     if not root.is_dir():
         raise ValueError('Scan target must be a directory')
@@ -181,7 +249,9 @@ def scan_repo(root, history=True, use_entropy=True, max_bytes=1024*1024,
         except RuntimeError as error:
             raise ValueError('History scan unavailable. Check Git installation/repository, or use --no-history') from error
     findings.sort(key=lambda f: (f.source, f.path, f.commit, f.line, f.rule))
-    return {'findings': [asdict(f) for f in findings], 'stats': stats, 'notices': notices,
+    rows, allowlist_stats = apply_allowlist(findings, allowlist)
+    stats.update(allowlist_stats)
+    return {'findings': rows, 'stats': stats, 'notices': notices,
             'scope': 'Local files and reachable local Git refs only; no remote fetch'}
 
 
@@ -192,14 +262,16 @@ def main(argv=None):
     parser.add_argument('--no-history', action='store_true')
     parser.add_argument('--no-entropy', action='store_true')
     parser.add_argument('--exclude', action='append', default=[], help='Root-relative glob; repeatable')
+    parser.add_argument('--allowlist', help='Reviewed exact-match JSON allowlist')
     parser.add_argument('--max-bytes', type=int, default=1024*1024)
     parser.add_argument('--max-commits', type=int, default=200, help='0 means all reachable commits')
     options = parser.parse_args(argv)
     if options.max_bytes <= 0 or options.max_commits < 0:
         parser.error('max-bytes must be positive and max-commits nonnegative')
     try:
+        allowlist = load_allowlist(options.allowlist) if options.allowlist else None
         report = scan_repo(options.path, not options.no_history, not options.no_entropy,
-                           options.max_bytes, options.max_commits, options.exclude)
+                           options.max_bytes, options.max_commits, options.exclude, allowlist)
     except (ValueError, OSError) as error:
         print('Error: ' + str(error), file=sys.stderr)
         return 2
@@ -210,6 +282,8 @@ def main(argv=None):
         for finding in report['findings']:
             print('{source} {path}:{line} {rule} [{severity}] {redacted} fingerprint={fingerprint} commit={commit}'.format(**finding))
         print('Scanned:', report['stats'])
+        if report['stats']['suppressed_findings']:
+            print('Suppressed by reviewed allowlist:', report['stats']['suppressed_findings'])
         for notice in report['notices']:
             print('NOTICE:', notice)
     # An incomplete scan must never be mistaken for a clean pass.
