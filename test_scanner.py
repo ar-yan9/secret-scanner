@@ -85,6 +85,30 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(len(json.loads(output.getvalue())['findings']), 1)
         self.assertNotIn(FAKE_PASSWORD, output.getvalue())
+    def test_cli_sarif_redacted(self):
+        self.write('.env', 'password = "'+FAKE_PASSWORD+'"')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = scanner.main([str(self.root), '--no-history', '--format', 'sarif'])
+        self.assertEqual(code, 1)
+        document = json.loads(output.getvalue())
+        run = document['runs'][0]
+        self.assertEqual(document['version'], '2.1.0')
+        self.assertEqual(run['results'][0]['ruleId'], 'secret-assignment')
+        self.assertEqual(run['results'][0]['level'], 'warning')
+        location = run['results'][0]['locations'][0]['physicalLocation']
+        self.assertEqual(location['artifactLocation']['uri'], '.env')
+        self.assertEqual(location['region']['startLine'], 1)
+        self.assertIn('secret-assignment', {rule['id'] for rule in run['tool']['driver']['rules']})
+        self.assertNotIn(FAKE_PASSWORD, output.getvalue())
+    def test_cli_sarif_clean(self):
+        self.write('hello.py', 'print("hello")')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = scanner.main([str(self.root), '--no-history', '--format', 'sarif'])
+        self.assertEqual(code, 0)
+        document = json.loads(output.getvalue())
+        self.assertEqual(document['runs'][0]['results'], [])
     def test_clean_exit(self):
         self.write('hello.py', 'print("hello")')
         with contextlib.redirect_stdout(io.StringIO()):
