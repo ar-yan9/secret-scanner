@@ -144,6 +144,74 @@ def apply_allowlist(findings, allowlist):
                   'unused_allowlist_entries': len(allowlist - keys)}
 
 
+SARIF_LEVELS = {'high': 'error', 'medium': 'warning', 'low': 'note'}
+SARIF_RULES = {
+    'aws-access-key': ('AWS access-key ID shape', 'high'),
+    'github-token': ('GitHub token shape', 'high'),
+    'slack-token': ('Slack token shape', 'high'),
+    'google-api-key': ('Google API-key shape', 'high'),
+    'private-key': ('Private-key header', 'high'),
+    'secret-assignment': ('Quoted secret-like assignment', 'medium'),
+    'high-entropy-token': ('High-entropy token candidate', 'low'),
+}
+
+
+def sarif_report(report):
+    """Build a SARIF 2.1.0 report without exposing matching secret values."""
+    rules = [
+        {
+            'id': name,
+            'name': name,
+            'shortDescription': {'text': description},
+            'defaultConfiguration': {'level': SARIF_LEVELS[severity]},
+        }
+        for name, (description, severity) in SARIF_RULES.items()
+    ]
+    results = []
+    for finding in report['findings']:
+        message = (
+            'Possible secret found; value is redacted. '
+            'Source: {source}; fingerprint: {fingerprint}.'
+        ).format(**finding)
+        if finding['commit']:
+            message += ' Representative commit: {commit}.'.format(**finding)
+        result = {
+            'ruleId': finding['rule'],
+            'level': SARIF_LEVELS.get(finding['severity'], 'note'),
+            'message': {'text': message},
+            'locations': [{
+                'physicalLocation': {
+                    'artifactLocation': {'uri': finding['path']},
+                    'region': {'startLine': finding['line']},
+                }
+            }],
+            'partialFingerprints': {'secretFingerprint': finding['fingerprint']},
+        }
+        if finding['commit']:
+            result['properties'] = {'commit': finding['commit']}
+        results.append(result)
+    return {
+        '$schema': 'https://json.schemastore.org/sarif-2.1.0.json',
+        'version': '2.1.0',
+        'runs': [{
+            'tool': {
+                'driver': {
+                    'name': 'Secret Scanner',
+                    'version': '1.0.0',
+                    'informationUri': 'https://github.com/ar-yan9/secret-scanner',
+                    'rules': rules,
+                }
+            },
+            'results': results,
+            'properties': {
+                'stats': report['stats'],
+                'notices': report['notices'],
+                'scope': report['scope'],
+            },
+        }],
+    }
+
+
 def decode(data):
     if b'\0' in data:
         return None
@@ -258,7 +326,7 @@ def scan_repo(root, history=True, use_entropy=True, max_bytes=1024*1024,
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('path', nargs='?', default='.')
-    parser.add_argument('--format', choices=['text', 'json'], default='text')
+    parser.add_argument('--format', choices=['text', 'json', 'sarif'], default='text')
     parser.add_argument('--no-history', action='store_true')
     parser.add_argument('--no-entropy', action='store_true')
     parser.add_argument('--exclude', action='append', default=[], help='Root-relative glob; repeatable')
@@ -277,6 +345,8 @@ def main(argv=None):
         return 2
     if options.format == 'json':
         print(json.dumps(report, indent=2))
+    elif options.format == 'sarif':
+        print(json.dumps(sarif_report(report), indent=2))
     else:
         print('Secret Scanner: %d finding(s)' % len(report['findings']))
         for finding in report['findings']:
