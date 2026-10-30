@@ -11,6 +11,7 @@ git clone https://github.com/ar-yan9/secret-scanner.git
 cd secret-scanner
 python3 scanner.py /path/to/repository
 python3 scanner.py /path/to/repository --format json > report.json
+python3 scanner.py /path/to/repository --format sarif > report.sarif
 python3 scanner.py /path/to/repository --max-commits 0
 python3 scanner.py /path/to/folder --no-history --exclude 'fixtures/*'
 python3 scanner.py /path/to/repository --allowlist reviewed-allowlist.json
@@ -19,7 +20,7 @@ python3 -m unittest -v
 
 On Windows, use `py -3.11` instead of `python3` if that is your Python launcher. Quote glob arguments so your shell does not expand them.
 
-Exit codes: **0** = no active findings in the scanned scope; **1** = possible secrets found; **2** = error or incomplete scan (including a history limit or unreadable file). Reviewed allowlist matches are suppressed from active findings and counted separately. JSON output includes findings, scan counts, allowlist counts, notices and scope.
+Exit codes: **0** = no active findings in the scanned scope; **1** = possible secrets found; **2** = error or incomplete scan (including a history limit or unreadable file). Reviewed allowlist matches are suppressed from active findings and counted separately. JSON output includes findings, scan counts, allowlist counts, notices and scope. SARIF output keeps the same active findings in SARIF 2.1.0 form for tools that consume SARIF; it remains redacted and this repository's CI does not upload it anywhere.
 
 ## Staged check and optional pre-commit hook
 
@@ -58,7 +59,7 @@ stated scope; it is not a security guarantee or a replacement for CI/review.
 - Files on disk, including untracked and hidden files such as `.env`.
 - Every distinct path/blob pair in commit trees reachable from **local** refs, including deleted files and other local branches. A finding records one representative commit containing the blob, not necessarily its first introduction.
 
-Reports include rule, severity, file, line, source, commit and a truncated SHA-256 fingerprint. Matching values and source lines are never printed. The fingerprint allows repeated-value comparison; it is **not anonymization** for guessable passwords. Paths, commit IDs and fingerprints may still be sensitive. Keep reports private.
+Reports include rule, severity, file, line, source, commit and a truncated SHA-256 fingerprint. Matching values and source lines are never printed. SARIF results use severity mapping high→error, medium→warning and low→note, with the fingerprint in `partialFingerprints` and the representative commit in result properties when present. The fingerprint allows repeated-value comparison; it is **not anonymization** for guessable passwords. Paths, commit IDs and fingerprints may still be sensitive. Keep reports private.
 
 ## Reviewed allowlist
 
@@ -116,4 +117,4 @@ Do not label a scan score as "SOC 2 compliant". There is no compliance score her
 
 ## Next work
 
-Add baseline generation, richer provider rules, SARIF output, and a configurable CI check. The staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
+Add baseline generation, richer provider rules, and a configurable CI check. The staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
