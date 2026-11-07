@@ -52,7 +52,7 @@ stated scope; it is not a security guarantee or a replacement for CI/review.
 
 ## What v1 checks
 
-- AWS access-key IDs, GitHub tokens, Slack tokens and Google API-key shapes.
+- AWS access-key IDs; GitHub and GitLab tokens; Slack tokens and webhook URLs; Google API-key, Stripe secret-key, npm token, SendGrid key and OpenAI-style key shapes.
 - PEM/OpenSSH private-key headers, including encrypted private-key headers.
 - Quoted assignments to common password, token, API-key and secret names. Obvious placeholders are filtered.
 - Mixed letter/digit strings with Shannon entropy of at least 4.3 bits per character, 24-128 characters long. These are low-confidence candidates, not confirmed credentials. Hex-only strings are skipped by the entropy rule because hashes are common.
@@ -117,4 +117,4 @@ Do not label a scan score as "SOC 2 compliant". There is no compliance score her
 
 ## Next work
 
-Add baseline generation, richer provider rules, and a configurable CI check. The staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
+Add baseline generation and a configurable CI check. The staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
