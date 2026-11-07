@@ -17,10 +17,28 @@ class RulesTests(unittest.TestCase):
         cases = [('AKIA' + 'Z'*16, 'aws-access-key'),
                  (FAKE_TOKEN, 'github-token'),
                  ('xoxb-' + '12345abcde'*3, 'slack-token'),
-                 ('AIza' + 'B'*35, 'google-api-key')]
+                 ('AIza' + 'B'*35, 'google-api-key'),
+                 ('glpat-' + 'aB3d'*5, 'gitlab-token'),
+                 ('sk_live_' + 'aB3dE5fG7hI9jK1l', 'stripe-key'),
+                 ('rk_test_' + 'Z9yX8wV7uT6sR5qP', 'stripe-key'),
+                 ('https://hooks.slack.com/services/T00000000/B00000000/' + 'Xy7'*8, 'slack-webhook'),
+                 ('npm_' + 'a1B2'*9, 'npm-token'),
+                 ('SG.' + 'a1'*11 + '.' + 'b2'*21 + 'c', 'sendgrid-key'),
+                 ('sk-' + 'aB3d'*12, 'openai-key'),
+                 ('sk-proj-' + 'xY9_'*8 + 'q', 'openai-key')]
         for value, rule in cases:
             with self.subTest(rule=rule):
                 self.assertIn(rule, [f.rule for f in scanner.scan_text(value, 'a')])
+    def test_provider_near_misses(self):
+        misses = ['glpat-short',
+                  'sk_live_' + 'a'*8,
+                  'https://hooks.slack.com/services/T000/B000/' + 'X'*24,
+                  'npm_' + 'a'*35,
+                  'SG.short.part',
+                  'sk-' + 'a'*10]
+        for value in misses:
+            with self.subTest(value=value):
+                self.assertEqual(scanner.scan_text(value, 'a'), [])
     def test_private_keys(self):
         for prefix in ('', 'RSA ', 'EC ', 'OPENSSH ', 'ENCRYPTED '):
             self.assertEqual(scanner.scan_text('-----BEGIN '+prefix+'PRIVATE KEY-----', 'key')[0].rule, 'private-key')
