@@ -18,6 +18,12 @@ RULES = [
     ('slack-token', re.compile(r'\bxox[baprs]-[A-Za-z0-9-]{20,255}\b'), 'high'),
     ('google-api-key', re.compile(r'\bAIza[A-Za-z0-9_-]{35}\b'), 'high'),
     ('private-key', re.compile(r'-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----'), 'high'),
+    ('gitlab-token', re.compile(r'\bglpat-[A-Za-z0-9_-]{20}\b'), 'high'),
+    ('stripe-key', re.compile(r'\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b'), 'high'),
+    ('slack-webhook', re.compile(r'https://hooks\.slack\.com/services/T[A-Z0-9]{8,12}/B[A-Z0-9]{8,12}/[A-Za-z0-9]{24}\b'), 'high'),
+    ('npm-token', re.compile(r'\bnpm_[A-Za-z0-9]{36}\b'), 'high'),
+    ('sendgrid-key', re.compile(r'\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b'), 'high'),
+    ('openai-key', re.compile(r'\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b'), 'high'),
 ]
 ASSIGNMENT = re.compile(
     r'''(?ix)["']?\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|aws[_-]?secret[_-]?access[_-]?key)\b["']?\s*[:=]\s*["']([^"'\r\n]{8,512})["']''')
@@ -151,6 +157,12 @@ SARIF_RULES = {
     'slack-token': ('Slack token shape', 'high'),
     'google-api-key': ('Google API-key shape', 'high'),
     'private-key': ('Private-key header', 'high'),
+    'gitlab-token': ('GitLab personal access token shape', 'high'),
+    'stripe-key': ('Stripe secret key shape', 'high'),
+    'slack-webhook': ('Slack webhook URL', 'high'),
+    'npm-token': ('npm access token shape', 'high'),
+    'sendgrid-key': ('SendGrid API key shape', 'high'),
+    'openai-key': ('OpenAI-style API key shape', 'high'),
     'secret-assignment': ('Quoted secret-like assignment', 'medium'),
     'high-entropy-token': ('High-entropy token candidate', 'low'),
 }
