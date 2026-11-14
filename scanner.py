@@ -34,6 +34,8 @@ ALLOWLIST_SOURCES = {'worktree', 'history'}
 ALLOWLIST_MAX_BYTES = 64 * 1024
 ALLOWLIST_MAX_ENTRIES = 1000
 ALLOWLIST_FINGERPRINT = re.compile(r'^[0-9a-f]{16}$')
+BASELINE_MAX_BYTES = 64 * 1024
+BASELINE_MAX_ENTRIES = 1000
 
 @dataclass(frozen=True)
 class Finding:
@@ -132,6 +134,98 @@ def load_allowlist(path):
             raise ValueError('allowlist entry format is invalid')
         entries.add((source, path, rule, fingerprint, line))
     return entries
+
+
+def load_baseline(path):
+    """Load a recorded findings snapshot without accepting raw secrets.
+
+    A baseline entry matches on source, path, rule and fingerprint only:
+    moving to another line keeps a finding baselined, while changing the
+    value changes the fingerprint and makes it active again. A recorded
+    line is kept for human review but never matched.
+    """
+    file = Path(path)
+    with file.open('rb') as handle:
+        data = handle.read(BASELINE_MAX_BYTES + 1)
+    if len(data) > BASELINE_MAX_BYTES:
+        raise ValueError('baseline exceeds byte limit')
+    try:
+        document = json.loads(data.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError('baseline must be valid UTF-8 JSON') from error
+    if (not isinstance(document, dict) or document.get('version') != 1
+            or not isinstance(document.get('findings'), list)):
+        raise ValueError('baseline format is invalid')
+    rows = document['findings']
+    if len(rows) > BASELINE_MAX_ENTRIES:
+        raise ValueError('baseline exceeds entry limit')
+    required = {'source', 'path', 'rule', 'fingerprint'}
+    allowed = required | {'line'}
+    entries = set()
+    for row in rows:
+        if (not isinstance(row, dict) or not required.issubset(row)
+                or not set(row).issubset(allowed)):
+            raise ValueError('baseline entry format is invalid')
+        source, path, rule = row['source'], row['path'], row['rule']
+        fingerprint = row['fingerprint']
+        line = row.get('line')
+        if (source not in ALLOWLIST_SOURCES or not isinstance(path, str)
+                or not 1 <= len(path) <= 512 or path.startswith('/')
+                or '\\' in path or '..' in Path(path).parts
+                or not isinstance(rule, str) or not 1 <= len(rule) <= 80
+                or any(ord(char) < 32 for char in rule)
+                or not isinstance(fingerprint, str)
+                or not ALLOWLIST_FINGERPRINT.fullmatch(fingerprint)
+                or (line is not None and (isinstance(line, bool)
+                    or not isinstance(line, int) or not 1 <= line <= 1000000))):
+            raise ValueError('baseline entry format is invalid')
+        entries.add((source, path, rule, fingerprint))
+    return entries
+
+
+def apply_baseline(rows, baseline):
+    """Remove only exact recorded matches and return baseline stats."""
+    if not baseline:
+        return rows, {'baseline_entries': 0, 'baselined_findings': 0,
+                      'stale_baseline_entries': 0}
+    keys = {(row['source'], row['path'], row['rule'], row['fingerprint'])
+            for row in rows}
+    kept = [row for row in rows
+            if (row['source'], row['path'], row['rule'], row['fingerprint'])
+            not in baseline]
+    return kept, {'baseline_entries': len(baseline),
+                  'baselined_findings': len(rows) - len(kept),
+                  'stale_baseline_entries': len(baseline - keys)}
+
+
+def write_baseline(path, rows):
+    """Atomically record the current findings as a new baseline file."""
+    seen = {}
+    for row in rows:
+        key = (row['source'], row['path'], row['rule'], row['fingerprint'])
+        if key not in seen:
+            entry = {'source': row['source'], 'path': row['path'],
+                     'rule': row['rule'], 'fingerprint': row['fingerprint'],
+                     'line': row['line']}
+            # The representative commit is deliberately never recorded.
+            seen[key] = entry
+    entries = [seen[key] for key in sorted(seen)]
+    if len(entries) > BASELINE_MAX_ENTRIES:
+        raise ValueError('baseline exceeds entry limit')
+    document = json.dumps({'version': 1, 'findings': entries}, indent=2) + '\n'
+    data = document.encode('utf-8')
+    if len(data) > BASELINE_MAX_BYTES:
+        raise ValueError('baseline exceeds byte limit')
+    target = Path(path)
+    temporary = target.with_name(target.name + '.tmp')
+    try:
+        with temporary.open('xb') as handle:
+            handle.write(data)
+        temporary.replace(target)
+    except OSError as error:
+        temporary.unlink(missing_ok=True)
+        raise ValueError('Could not write baseline: ' + target.name) from error
+    return len(entries)
 
 
 def apply_allowlist(findings, allowlist):
@@ -246,7 +340,7 @@ def git(root, *args):
 
 
 def scan_repo(root, history=True, use_entropy=True, max_bytes=1024*1024,
-              max_commits=200, excludes=(), allowlist=None):
+              max_commits=200, excludes=(), allowlist=None, baseline=None):
     root = Path(root).resolve()
     if not root.is_dir():
         raise ValueError('Scan target must be a directory')
@@ -330,7 +424,9 @@ def scan_repo(root, history=True, use_entropy=True, max_bytes=1024*1024,
             raise ValueError('History scan unavailable. Check Git installation/repository, or use --no-history') from error
     findings.sort(key=lambda f: (f.source, f.path, f.commit, f.line, f.rule))
     rows, allowlist_stats = apply_allowlist(findings, allowlist)
+    rows, baseline_stats = apply_baseline(rows, baseline)
     stats.update(allowlist_stats)
+    stats.update(baseline_stats)
     return {'findings': rows, 'stats': stats, 'notices': notices,
             'scope': 'Local files and reachable local Git refs only; no remote fetch'}
 
@@ -343,15 +439,33 @@ def main(argv=None):
     parser.add_argument('--no-entropy', action='store_true')
     parser.add_argument('--exclude', action='append', default=[], help='Root-relative glob; repeatable')
     parser.add_argument('--allowlist', help='Reviewed exact-match JSON allowlist')
+    parser.add_argument('--baseline', help='Recorded findings snapshot to suppress')
+    parser.add_argument('--write-baseline', help='Record current findings to this file and exit')
     parser.add_argument('--max-bytes', type=int, default=1024*1024)
     parser.add_argument('--max-commits', type=int, default=200, help='0 means all reachable commits')
     options = parser.parse_args(argv)
     if options.max_bytes <= 0 or options.max_commits < 0:
         parser.error('max-bytes must be positive and max-commits nonnegative')
+    if options.baseline and options.write_baseline:
+        parser.error('use either --baseline or --write-baseline, not both')
     try:
         allowlist = load_allowlist(options.allowlist) if options.allowlist else None
+        baseline = load_baseline(options.baseline) if options.baseline else None
         report = scan_repo(options.path, not options.no_history, not options.no_entropy,
-                           options.max_bytes, options.max_commits, options.exclude, allowlist)
+                           options.max_bytes, options.max_commits, options.exclude, allowlist,
+                           baseline)
+        if options.write_baseline:
+            if report['notices']:
+                # Never record an incomplete scan as the known state.
+                for notice in report['notices']:
+                    print('NOTICE:', notice)
+                print('Error: scan incomplete; baseline not written', file=sys.stderr)
+                return 2
+            count = write_baseline(options.write_baseline, report['findings'])
+            print('Wrote baseline: %d finding(s) recorded to %s' % (count, options.write_baseline))
+            if report['stats']['suppressed_findings']:
+                print('NOTICE: allowlist already suppresses %d finding(s); they stay out of the baseline' % report['stats']['suppressed_findings'])
+            return 0
     except (ValueError, OSError) as error:
         print('Error: ' + str(error), file=sys.stderr)
         return 2
@@ -366,6 +480,8 @@ def main(argv=None):
         print('Scanned:', report['stats'])
         if report['stats']['suppressed_findings']:
             print('Suppressed by reviewed allowlist:', report['stats']['suppressed_findings'])
+        if report['stats']['baselined_findings']:
+            print('Baselined (already recorded):', report['stats']['baselined_findings'])
         for notice in report['notices']:
             print('NOTICE:', notice)
     # An incomplete scan must never be mistaken for a clean pass.
