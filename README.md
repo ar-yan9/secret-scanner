@@ -15,6 +15,8 @@ python3 scanner.py /path/to/repository --format sarif > report.sarif
 python3 scanner.py /path/to/repository --max-commits 0
 python3 scanner.py /path/to/folder --no-history --exclude 'fixtures/*'
 python3 scanner.py /path/to/repository --allowlist reviewed-allowlist.json
+python3 scanner.py /path/to/repository --write-baseline .secrets-baseline.json
+python3 scanner.py /path/to/repository --baseline .secrets-baseline.json
 python3 -m unittest -v
 ```
 
@@ -83,6 +85,17 @@ Use an allowlist only for a finding a person has reviewed and confirmed is not a
 
 Unknown fields, broad patterns, absolute paths, parent-directory paths and invalid fingerprints are rejected. The file is capped at 64 KiB and 1,000 entries. If a matched finding moves to another line or changes value, it becomes active again. Scan stats show `allowlist_entries`, `suppressed_findings` and `unused_allowlist_entries`, so stale entries remain visible. The allowlist applies to `scanner.py` worktree/history scans only; the staged `precommit.py` check intentionally has no suppression path.
 
+## Baseline
+
+A baseline records the findings present at one point in time so later scans only report **new** ones. This suits an existing repository with known findings you have not cleaned up yet. It does not mean those findings were reviewed or are safe; use the reviewed allowlist for that. Record once, then scan with it:
+
+```bash
+python3 scanner.py /path/to/repository --write-baseline .secrets-baseline.json
+python3 scanner.py /path/to/repository --baseline .secrets-baseline.json
+```
+
+A baseline entry matches on source, path, rule and fingerprint only. Moving a finding to another line keeps it baselined; changing the value changes the fingerprint and makes it active again. The recorded line is kept for human review but never matched, and the representative commit is never recorded. Baselined findings do not fail the scan. Stats show `baseline_entries`, `baselined_findings` and `stale_baseline_entries`, so entries whose finding disappeared remain visible. The file stores only the same redacted metadata as a report: no secret values. The format is validated as strictly as the allowlist (64 KiB and 1,000 entries maximum) and a baseline is never written from an incomplete scan (notices fail with exit 2 first). `--baseline` and `--write-baseline` cannot be combined; rerunning `--write-baseline` replaces the file atomically. Keep the baseline file private, like any report. The staged `precommit.py` check has no baseline path either.
+
 ## Scope and limits
 
 Default history limit: 200 commits. A notice and exit 2 mean coverage was incomplete. Use `--max-commits 0` for all reachable local history. No remote refs are fetched, and shallow clones, dangling objects, reflogs, LFS contents and submodule contents are not covered. History scanning must start at the Git repository root.
@@ -117,4 +130,4 @@ Do not label a scan score as "SOC 2 compliant". There is no compliance score her
 
 ## Next work
 
-Add baseline generation and a configurable CI check. The staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
+Add a configurable CI check. The baseline, staged check and optional local pre-commit hook are available now. Keep benchmarks and claims based on real tests.
