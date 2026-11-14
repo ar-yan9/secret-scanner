@@ -222,3 +222,123 @@ class AllowlistTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class BaselineTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root/'.env').write_text('password = "'+FAKE_PASSWORD+'"')
+        self.baseline = self.root/'baseline.json'
+    def run_cli(self, *args):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = scanner.main(list(args))
+        return code, output.getvalue()
+    def write_baseline(self):
+        code, out = self.run_cli(str(self.root), '--no-history',
+                                 '--write-baseline', str(self.baseline))
+        self.assertEqual(code, 0)
+        self.assertIn('Wrote baseline: 1 finding(s)', out)
+        return json.loads(self.baseline.read_text())
+    def test_write_and_clean_rescan(self):
+        document = self.write_baseline()
+        self.assertEqual(document['version'], 1)
+        row = document['findings'][0]
+        self.assertEqual((row['source'], row['path'], row['rule'], row['line']),
+                         ('worktree', '.env', 'secret-assignment', 1))
+        self.assertNotIn(FAKE_PASSWORD, json.dumps(document))
+        baseline = scanner.load_baseline(self.baseline)
+        report = scanner.scan_repo(self.root, history=False, baseline=baseline)
+        self.assertEqual(report['findings'], [])
+        self.assertEqual(report['stats']['baseline_entries'], 1)
+        self.assertEqual(report['stats']['baselined_findings'], 1)
+        self.assertEqual(report['stats']['stale_baseline_entries'], 0)
+    def test_new_finding_after_baseline_is_active(self):
+        self.write_baseline()
+        (self.root/'new.txt').write_text(FAKE_TOKEN)
+        code, out = self.run_cli(str(self.root), '--no-history',
+                                 '--baseline', str(self.baseline))
+        self.assertEqual(code, 1)
+        self.assertIn('Baselined (already recorded): 1', out)
+        report = scanner.scan_repo(self.root, history=False,
+                                   baseline=scanner.load_baseline(self.baseline))
+        self.assertEqual([f['path'] for f in report['findings']], ['new.txt'])
+    def test_changed_value_is_active_again(self):
+        self.write_baseline()
+        (self.root/'.env').write_text('password = "synthetic-only-password-777!"')
+        report = scanner.scan_repo(self.root, history=False,
+                                   baseline=scanner.load_baseline(self.baseline))
+        self.assertEqual(len(report['findings']), 1)
+        self.assertEqual(report['stats']['stale_baseline_entries'], 1)
+    def test_moved_line_stays_baselined(self):
+        self.write_baseline()
+        (self.root/'.env').write_text('# comment\npassword = "'+FAKE_PASSWORD+'"')
+        report = scanner.scan_repo(self.root, history=False,
+                                   baseline=scanner.load_baseline(self.baseline))
+        self.assertEqual(report['findings'], [])
+        self.assertEqual(report['stats']['baselined_findings'], 1)
+    def test_invalid_baseline_rejected(self):
+        valid = {'source': 'worktree', 'path': '.env', 'rule': 'secret-assignment',
+                 'fingerprint': '0123456789abcdef'}
+        rows = [dict(valid, source='index'), dict(valid, path='../x'),
+                dict(valid, fingerprint='A' * 16), dict(valid, unknown=1),
+                dict(valid, line=0)]
+        for row in rows:
+            with self.subTest(row=row):
+                self.baseline.write_text(json.dumps({'version': 1, 'findings': [row]}))
+                with self.assertRaises(ValueError):
+                    scanner.load_baseline(self.baseline)
+        for text in ('not json', '{"version":2,"findings":[]}', '{"version":1,"findings":{}}'):
+            self.baseline.write_text(text)
+            with self.assertRaises(ValueError):
+                scanner.load_baseline(self.baseline)
+    def test_cli_bad_baseline_fails_closed(self):
+        self.baseline.write_text('{"version":1,"findings":[{"path":".env"}]}')
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = scanner.main([str(self.root), '--no-history', '--baseline', str(self.baseline)])
+        self.assertEqual(code, 2)
+    def test_write_baseline_overwrites_atomically(self):
+        self.write_baseline()
+        self.write_baseline()
+        self.assertEqual(len(json.loads(self.baseline.read_text())['findings']), 1)
+    def test_baseline_and_allowlist_compose(self):
+        (self.root/'second.txt').write_text('token = "synthetic-only-token-482!"')
+        rows = scanner.scan_repo(self.root, history=False)['findings']
+        allow_row = {k: rows[1][k] for k in ('source', 'path', 'rule', 'fingerprint', 'line')}
+        (self.root/'allowlist.json').write_text(json.dumps({'version': 1, 'allow': [allow_row]}))
+        code, _ = self.run_cli(str(self.root), '--no-history',
+                               '--allowlist', str(self.root/'allowlist.json'),
+                               '--write-baseline', str(self.baseline))
+        self.assertEqual(code, 0)
+        report = scanner.scan_repo(self.root, history=False,
+                                   allowlist=scanner.load_allowlist(self.root/'allowlist.json'),
+                                   baseline=scanner.load_baseline(self.baseline))
+        self.assertEqual(report['findings'], [])
+        self.assertEqual(report['stats']['suppressed_findings'], 1)
+        self.assertEqual(report['stats']['baselined_findings'], 1)
+    def test_conflicting_baseline_flags_rejected(self):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                scanner.main([str(self.root), '--baseline', 'a', '--write-baseline', 'b'])
+    @unittest.skipUnless(shutil.which('git'), 'Git required')
+    def test_write_baseline_refuses_incomplete_scan(self):
+        def git(*args):
+            subprocess.run(['git', '-C', str(self.root), *args], check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        git('init', '-b', 'main')
+        git('config', 'user.email', 'fixture@example.invalid')
+        git('config', 'user.name', 'Test Fixture')
+        git('add', '.')
+        git('commit', '-m', 'one')
+        self.write('later.txt', FAKE_TOKEN)
+        git('add', '.')
+        git('commit', '-m', 'two')
+        code, _ = self.run_cli(str(self.root), '--max-commits', '1',
+                               '--write-baseline', str(self.baseline))
+        self.assertEqual(code, 2)
+        self.assertFalse(self.baseline.exists())
+    def write(self, path, text):
+        file = self.root / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text)
