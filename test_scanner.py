@@ -25,7 +25,16 @@ class RulesTests(unittest.TestCase):
                  ('npm_' + 'a1B2'*9, 'npm-token'),
                  ('SG.' + 'a1'*11 + '.' + 'b2'*21 + 'c', 'sendgrid-key'),
                  ('sk-' + 'aB3d'*12, 'openai-key'),
-                 ('sk-proj-' + 'xY9_'*8 + 'q', 'openai-key')]
+                 ('sk-proj-' + 'xY9_'*8 + 'q', 'openai-key'),
+                 ('pypi-AgEIcHlwaS5vcmc' + 'xK2mQ9'*10, 'pypi-token'),
+                 ('shpat_' + '0a1b2c3d'*4, 'shopify-token'),
+                 ('shpca_' + 'f9e8d7c6'*4, 'shopify-token'),
+                 ('dop_v1_' + '0a1b2c3d'*8, 'digitalocean-token'),
+                 ('SK' + '0a1b2c3d'*4, 'twilio-api-key'),
+                 ('hvs.' + 'aB3dE5fG7hI9jK1lM2nO4pQ6', 'vault-token'),
+                 ('hvb.' + 'Z9yX8wV7uT6sR5qP4oN3m2L1', 'vault-token'),
+                 ('dp.pt.' + 'aB3dE5fG7h'*4, 'doppler-token'),
+                 ('AGE-SECRET-KEY-1' + 'A2B3C4D5'*7 + 'E6', 'age-secret-key')]
         for value, rule in cases:
             with self.subTest(rule=rule):
                 self.assertIn(rule, [f.rule for f in scanner.scan_text(value, 'a')])
@@ -35,7 +44,15 @@ class RulesTests(unittest.TestCase):
                   'https://hooks.slack.com/services/T000/B000/' + 'X'*24,
                   'npm_' + 'a'*35,
                   'SG.short.part',
-                  'sk-' + 'a'*10]
+                  'sk-' + 'a'*10,
+                  'pypi-' + 'a'*49,
+                  'shpxx_' + 'a'*32,
+                  'shpat_' + 'a'*31,
+                  'dop_v2_' + 'a'*64,
+                  'SK' + 'a'*31,
+                  'hvs.' + 'a'*23,
+                  'dp.pt.' + 'a'*39,
+                  'AGE-SECRET-KEY-1' + 'A'*57]
         for value in misses:
             with self.subTest(value=value):
                 self.assertEqual(scanner.scan_text(value, 'a'), [])
