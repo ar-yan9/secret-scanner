@@ -24,6 +24,13 @@ RULES = [
     ('npm-token', re.compile(r'\bnpm_[A-Za-z0-9]{36}\b'), 'high'),
     ('sendgrid-key', re.compile(r'\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b'), 'high'),
     ('openai-key', re.compile(r'\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b'), 'high'),
+    ('pypi-token', re.compile(r'\bpypi-[A-Za-z0-9_-]{50,}\b'), 'high'),
+    ('shopify-token', re.compile(r'\bshp(?:at|ca|pa|ss)_[0-9a-f]{32}\b'), 'high'),
+    ('digitalocean-token', re.compile(r'\bdop_v1_[0-9a-f]{64}\b'), 'high'),
+    ('twilio-api-key', re.compile(r'\bSK[0-9a-f]{32}\b'), 'high'),
+    ('vault-token', re.compile(r'\bhv[sb]\.[A-Za-z0-9_-]{24,}\b'), 'high'),
+    ('doppler-token', re.compile(r'\bdp\.pt\.[A-Za-z0-9]{40,}\b'), 'high'),
+    ('age-secret-key', re.compile(r'\bAGE-SECRET-KEY-1[A-Z0-9]{58}\b'), 'high'),
 ]
 ASSIGNMENT = re.compile(
     r'''(?ix)["']?\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|aws[_-]?secret[_-]?access[_-]?key)\b["']?\s*[:=]\s*["']([^"'\r\n]{8,512})["']''')
@@ -257,6 +264,13 @@ SARIF_RULES = {
     'npm-token': ('npm access token shape', 'high'),
     'sendgrid-key': ('SendGrid API key shape', 'high'),
     'openai-key': ('OpenAI-style API key shape', 'high'),
+    'pypi-token': ('PyPI upload token shape', 'high'),
+    'shopify-token': ('Shopify access token shape', 'high'),
+    'digitalocean-token': ('DigitalOcean personal access token shape', 'high'),
+    'twilio-api-key': ('Twilio API key SID shape', 'high'),
+    'vault-token': ('Vault token shape', 'high'),
+    'doppler-token': ('Doppler personal token shape', 'high'),
+    'age-secret-key': ('age secret key shape', 'high'),
     'secret-assignment': ('Quoted secret-like assignment', 'medium'),
     'high-entropy-token': ('High-entropy token candidate', 'low'),
 }
